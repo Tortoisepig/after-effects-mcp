@@ -1,14 +1,105 @@
+#target aftereffects
+#targetengine "ae_mcp_bridge"
+
 // mcp-bridge-auto.jsx
 // Auto-running MCP Bridge panel for After Effects
 
-// Remove #include directives as we define functions below
-/*
-#include "createComposition.jsx"
-#include "createTextLayer.jsx"
-#include "createShapeLayer.jsx"
-#include "createSolidLayer.jsx"
-#include "setLayerProperties.jsx"
-*/
+// JSON polyfill for ExtendScript
+if (typeof JSON === "undefined") {
+    JSON = {};
+}
+if (typeof JSON.parse !== "function") {
+    JSON.parse = function (text) {
+        return eval("(" + text + ")");
+    };
+}
+if (typeof JSON.stringify !== "function") {
+    (function () {
+        function esc(str) {
+            return (str + "")
+                .replace(/\\/g, "\\\\")
+                .replace(/"/g, '\\"')
+                .replace(/\n/g, "\\n")
+                .replace(/\r/g, "\\r")
+                .replace(/\t/g, "\\t");
+        }
+        function toJSON(val) {
+            if (val === null || val === undefined) return "null";
+            var t = typeof val;
+            if (t === "number" || t === "boolean") return String(val);
+            if (t === "string") return '"' + esc(val) + '"';
+            if (val instanceof Array) {
+                var a = [];
+                for (var i = 0; i < val.length; i++) a.push(toJSON(val[i]));
+                return "[" + a.join(",") + "]";
+            }
+            if (t === "object") {
+                var props = [];
+                for (var k in val) {
+                    if (val.hasOwnProperty(k) && typeof val[k] !== "function" && typeof val[k] !== "undefined") {
+                        props.push('"' + esc(k) + '":' + toJSON(val[k]));
+                    }
+                }
+                return "{" + props.join(",") + "}";
+            }
+            return "null";
+        }
+        JSON.stringify = function (value, _replacer, _space) {
+            return toJSON(value);
+        };
+    })();
+}
+
+// Composition detection and resolution helpers
+function isComp(item) {
+    if (!item) return false;
+    try {
+        if (item instanceof CompItem) return true;
+    } catch (e) {}
+    try {
+        if (item.typeName === "Composition") return true;
+    } catch (e) {}
+    try {
+        if (typeof item.numLayers === "number" && typeof item.frameRate === "number" && typeof item.layers !== "undefined") return true;
+    } catch (e) {}
+    return false;
+}
+
+function findComp(compName) {
+    var project = app.project;
+    if (!project) {
+        throw new Error("No active After Effects project");
+    }
+    if (compName) {
+        for (var i = 1; i <= project.numItems; i++) {
+            var item = project.item(i);
+            if (isComp(item) && item.name === compName) {
+                return item;
+            }
+        }
+    }
+    if (isComp(project.activeItem)) {
+        return project.activeItem;
+    }
+    var singleComp = null;
+    var compCount = 0;
+    for (var j = 1; j <= project.numItems; j++) {
+        var it = project.item(j);
+        if (isComp(it)) {
+            compCount++;
+            singleComp = it;
+        }
+    }
+    if (compCount === 1) {
+        return singleComp;
+    }
+
+    if (compName) {
+        throw new Error("No composition found with name '" + compName + "' and no active composition");
+    } else {
+        throw new Error("No active composition found");
+    }
+}
 
 // --- Function Definitions ---
 
@@ -47,15 +138,7 @@ function createTextLayer(args) {
         var duration = args.duration || 5; 
         var fontFamily = args.fontFamily || "Arial";
         var alignment = args.alignment || "center"; 
-        var comp = null;
-        for (var i = 1; i <= app.project.numItems; i++) {
-            var item = app.project.item(i);
-            if (item instanceof CompItem && item.name === compName) { comp = item; break; }
-        }
-        if (!comp) {
-            if (app.project.activeItem instanceof CompItem) { comp = app.project.activeItem; } 
-            else { throw new Error("No composition found with name '" + compName + "' and no active composition"); }
-        }
+        var comp = findComp(compName);
         var textLayer = comp.layers.addText(text);
         var textProp = textLayer.property("ADBE Text Properties").property("ADBE Text Document");
         var textDocument = textProp.value;
@@ -92,15 +175,7 @@ function createShapeLayer(args) {
         var duration = args.duration || 5; 
         var name = args.name || "Shape Layer";
         var points = args.points || 5; 
-        var comp = null;
-        for (var i = 1; i <= app.project.numItems; i++) {
-            var item = app.project.item(i);
-            if (item instanceof CompItem && item.name === compName) { comp = item; break; }
-        }
-        if (!comp) {
-            if (app.project.activeItem instanceof CompItem) { comp = app.project.activeItem; } 
-            else { throw new Error("No composition found with name '" + compName + "' and no active composition"); }
-        }
+        var comp = findComp(compName);
         var shapeLayer = comp.layers.addShape();
         shapeLayer.name = name;
         var contents = shapeLayer.property("Contents"); 
@@ -151,15 +226,7 @@ function createCamera(args) {
         var pointOfInterest = args.pointOfInterest; // Optional [x, y, z]
         var oneNode = args.oneNode || false; // If true, create a one-node camera (no point of interest)
 
-        var comp = null;
-        for (var i = 1; i <= app.project.numItems; i++) {
-            var item = app.project.item(i);
-            if (item instanceof CompItem && item.name === compName) { comp = item; break; }
-        }
-        if (!comp) {
-            if (app.project.activeItem instanceof CompItem) { comp = app.project.activeItem; }
-            else { throw new Error("No composition found with name '" + compName + "' and no active composition"); }
-        }
+        var comp = findComp(compName);
 
         var centerPoint = [comp.width / 2, comp.height / 2];
         var cameraLayer = comp.layers.addCamera(name, centerPoint);
@@ -206,15 +273,7 @@ function duplicateLayer(args) {
         var layerName = args.layerName || "";
         var newName = args.newName; // optional rename
 
-        var comp = null;
-        for (var i = 1; i <= app.project.numItems; i++) {
-            var item = app.project.item(i);
-            if (item instanceof CompItem && item.name === compName) { comp = item; break; }
-        }
-        if (!comp) {
-            if (app.project.activeItem instanceof CompItem) { comp = app.project.activeItem; }
-            else { throw new Error("No composition found with name '" + compName + "' and no active composition"); }
-        }
+        var comp = findComp(compName);
 
         var layer = null;
         if (layerIndex !== undefined && layerIndex !== null) {
@@ -248,15 +307,7 @@ function deleteLayer(args) {
         var layerIndex = args.layerIndex;
         var layerName = args.layerName || "";
 
-        var comp = null;
-        for (var i = 1; i <= app.project.numItems; i++) {
-            var item = app.project.item(i);
-            if (item instanceof CompItem && item.name === compName) { comp = item; break; }
-        }
-        if (!comp) {
-            if (app.project.activeItem instanceof CompItem) { comp = app.project.activeItem; }
-            else { throw new Error("No composition found with name '" + compName + "' and no active composition"); }
-        }
+        var comp = findComp(compName);
 
         var layer = null;
         if (layerIndex !== undefined && layerIndex !== null) {
@@ -298,15 +349,7 @@ function setLayerMask(args) {
         var maskExpansion = args.maskExpansion; // optional pixels
         var maskName = args.maskName; // optional rename
 
-        var comp = null;
-        for (var i = 1; i <= app.project.numItems; i++) {
-            var item = app.project.item(i);
-            if (item instanceof CompItem && item.name === compName) { comp = item; break; }
-        }
-        if (!comp) {
-            if (app.project.activeItem instanceof CompItem) { comp = app.project.activeItem; }
-            else { throw new Error("No composition found with name '" + compName + "' and no active composition"); }
-        }
+        var comp = findComp(compName);
 
         var layer = null;
         if (layerIndex !== undefined && layerIndex !== null) {
@@ -421,15 +464,7 @@ function createSolidLayer(args) {
         var startTime = args.startTime || 0;
         var duration = args.duration || 5; 
         var isAdjustment = args.isAdjustment || false; 
-        var comp = null;
-        for (var i = 1; i <= app.project.numItems; i++) {
-            var item = app.project.item(i);
-            if (item instanceof CompItem && item.name === compName) { comp = item; break; }
-        }
-        if (!comp) {
-            if (app.project.activeItem instanceof CompItem) { comp = app.project.activeItem; } 
-            else { throw new Error("No composition found with name '" + compName + "' and no active composition"); }
-        }
+        var comp = findComp(compName);
         if (!size) { size = [comp.width, comp.height]; }
         var solidLayer;
         if (isAdjustment) {
@@ -472,15 +507,7 @@ function setLayerProperties(args) {
         var fillColor = args.fillColor; // New: font color
         
         // Find the composition (same logic as before)
-        var comp = null;
-        for (var i = 1; i <= app.project.numItems; i++) {
-            var item = app.project.item(i);
-            if (item instanceof CompItem && item.name === compName) { comp = item; break; }
-        }
-        if (!comp) {
-            if (app.project.activeItem instanceof CompItem) { comp = app.project.activeItem; } 
-            else { throw new Error("No composition found with name '" + compName + "' and no active composition"); }
-        }
+        var comp = findComp(compName);
         
         // Find the layer (same logic as before)
         var layer = null;
@@ -676,15 +703,7 @@ function batchSetLayerProperties(args) {
             throw new Error("No operations provided. Pass an array of {layerIndex, ...properties}");
         }
 
-        var comp = null;
-        for (var i = 1; i <= app.project.numItems; i++) {
-            var item = app.project.item(i);
-            if (item instanceof CompItem && item.name === compName) { comp = item; break; }
-        }
-        if (!comp) {
-            if (app.project.activeItem instanceof CompItem) { comp = app.project.activeItem; }
-            else { throw new Error("No composition found with name '" + compName + "' and no active composition"); }
-        }
+        var comp = findComp(compName);
 
         var results = [];
         for (var o = 0; o < operations.length; o++) {
@@ -753,8 +772,15 @@ function batchSetLayerProperties(args) {
 function setLayerKeyframe(compIndex, layerIndex, propertyName, timeInSeconds, value) {
     try {
         // Use 1-based indices as per After Effects API
-        var comp = app.project.items[compIndex];
-        if (!comp || !(comp instanceof CompItem)) {
+        var comp = null;
+        if (compIndex && compIndex > 0 && app.project && app.project.numItems >= compIndex) {
+            var it = app.project.item(compIndex);
+            if (isComp(it)) comp = it;
+        }
+        if (!comp) {
+            try { comp = findComp(); } catch (e) {}
+        }
+        if (!comp) {
             return JSON.stringify({ success: false, message: "Composition not found at index " + compIndex });
         }
         var layer = comp.layers[layerIndex];
@@ -813,8 +839,15 @@ function setLayerKeyframe(compIndex, layerIndex, propertyName, timeInSeconds, va
 function setLayerExpression(compIndex, layerIndex, propertyName, expressionString) {
     try {
          // Adjust indices to be 0-based for ExtendScript arrays
-        var comp = app.project.items[compIndex];
-         if (!comp || !(comp instanceof CompItem)) {
+        var comp = null;
+        if (compIndex && compIndex > 0 && app.project && app.project.numItems >= compIndex) {
+            var it = app.project.item(compIndex);
+            if (isComp(it)) comp = it;
+        }
+        if (!comp) {
+            try { comp = findComp(); } catch (e) {}
+        }
+        if (!comp) {
             return JSON.stringify({ success: false, message: "Composition not found at index " + compIndex });
         }
         var layer = comp.layers[layerIndex];
@@ -884,9 +917,13 @@ function applyEffect(args) {
         }
         
         // Find the composition by index
-        var comp = app.project.item(compIndex);
-        if (!comp || !(comp instanceof CompItem)) {
-            throw new Error("Composition not found at index " + compIndex);
+        var comp = null;
+        if (compIndex && compIndex > 0 && app.project && app.project.numItems >= compIndex) {
+            var testItem = app.project.item(compIndex);
+            if (isComp(testItem)) comp = testItem;
+        }
+        if (!comp) {
+            comp = findComp(args.compName);
         }
         
         // Find the layer by index
@@ -1016,9 +1053,13 @@ function applyEffectTemplate(args) {
         }
         
         // Find the composition by index
-        var comp = app.project.item(compIndex);
-        if (!comp || !(comp instanceof CompItem)) {
-            throw new Error("Composition not found at index " + compIndex);
+        var comp = null;
+        if (compIndex && compIndex > 0 && app.project && app.project.numItems >= compIndex) {
+            var testItem = app.project.item(compIndex);
+            if (isComp(testItem)) comp = testItem;
+        }
+        if (!comp) {
+            comp = findComp(args.compName);
         }
         
         // Find the layer by index
@@ -1234,53 +1275,6 @@ function bridgeTestEffects(args) {
     }
 }
 
-// JSON polyfill for ExtendScript (when JSON is undefined)
-if (typeof JSON === "undefined") {
-    JSON = {};
-}
-if (typeof JSON.parse !== "function") {
-    JSON.parse = function (text) {
-        // Safe-ish fallback for trusted input (our own command file)
-        return eval("(" + text + ")");
-    };
-}
-if (typeof JSON.stringify !== "function") {
-    (function () {
-        function esc(str) {
-            return (str + "")
-                .replace(/\\/g, "\\\\")
-                .replace(/"/g, '\\"')
-                .replace(/\n/g, "\\n")
-                .replace(/\r/g, "\\r")
-                .replace(/\t/g, "\\t");
-        }
-        function toJSON(val) {
-            if (val === null) return "null";
-            var t = typeof val;
-            if (t === "number" || t === "boolean") return String(val);
-            if (t === "string") return '"' + esc(val) + '"';
-            if (val instanceof Array) {
-                var a = [];
-                for (var i = 0; i < val.length; i++) a.push(toJSON(val[i]));
-                return "[" + a.join(",") + "]";
-            }
-            if (t === "object") {
-                var props = [];
-                for (var k in val) {
-                    if (val.hasOwnProperty(k) && typeof val[k] !== "function" && typeof val[k] !== "undefined") {
-                        props.push('"' + esc(k) + '":' + toJSON(val[k]));
-                    }
-                }
-                return "{" + props.join(",") + "}";
-            }
-            return "null";
-        }
-        JSON.stringify = function (value, _replacer, _space) {
-            return toJSON(value);
-        };
-    })();
-}
-
 // Detect AE version (AE 2025 = version 25.x, AE 2026 = version 26.x)
 var aeVersion = parseFloat(app.version);
 var isAE2025OrLater = aeVersion >= 25.0;
@@ -1324,7 +1318,7 @@ function getCommandFilePath() {
     if (!bridgeFolder.exists) {
         bridgeFolder.create();
     }
-    return bridgeFolder.fsName + "/ae_command.json";
+    return bridgeFolder.fsName + "\\ae_command.json";
 }
 
 // Result file path - use Documents folder for reliable access
@@ -1334,22 +1328,14 @@ function getResultFilePath() {
     if (!bridgeFolder.exists) {
         bridgeFolder.create();
     }
-    return bridgeFolder.fsName + "/ae_mcp_result.json";
+    return bridgeFolder.fsName + "\\ae_mcp_result.json";
 }
 
 // --- setCompositionProperties: set duration, frameRate, etc. on active or named comp ---
 function setCompositionProperties(args) {
     try {
         var compName = args.compName || "";
-        var comp = null;
-        for (var i = 1; i <= app.project.numItems; i++) {
-            var item = app.project.item(i);
-            if (item instanceof CompItem && item.name === compName) { comp = item; break; }
-        }
-        if (!comp) {
-            if (app.project.activeItem instanceof CompItem) { comp = app.project.activeItem; }
-            else { throw new Error("No composition found with name '" + compName + "' and no active composition"); }
-        }
+        var comp = findComp(compName);
         var changed = [];
         if (args.duration !== undefined && args.duration !== null) { comp.duration = args.duration; changed.push("duration"); }
         if (args.frameRate !== undefined && args.frameRate !== null) { comp.frameRate = args.frameRate; changed.push("frameRate"); }
@@ -1370,15 +1356,13 @@ function setCompositionProperties(args) {
 function getProjectInfo() {
     var project = app.project;
     var result = {
-        projectName: project.file ? project.file.name : "Untitled Project",
-        path: project.file ? project.file.fsName : "",
-        numItems: project.numItems,
-        bitsPerChannel: project.bitsPerChannel,
-        timeMode: project.timeDisplayType === TimeDisplayType.FRAMES ? "Frames" : "Timecode",
+        projectName: (project && project.file) ? project.file.name : "Untitled Project",
+        path: (project && project.file) ? project.file.fsName : "",
+        numItems: project ? project.numItems : 0,
+        bitsPerChannel: project ? project.bitsPerChannel : 8,
         items: []
     };
 
-    // Count item types
     var countByType = {
         compositions: 0,
         footage: 0,
@@ -1386,48 +1370,48 @@ function getProjectInfo() {
         solids: 0
     };
 
-    // Get item information (limited for performance)
-    for (var i = 1; i <= Math.min(project.numItems, 50); i++) {
-        var item = project.item(i);
-        var itemType = "";
-        
-        if (item instanceof CompItem) {
-            itemType = "Composition";
-            countByType.compositions++;
-        } else if (item instanceof FolderItem) {
-            itemType = "Folder";
-            countByType.folders++;
-        } else if (item instanceof FootageItem) {
-            if (item.mainSource instanceof SolidSource) {
-                itemType = "Solid";
-                countByType.solids++;
-            } else {
-                itemType = "Footage";
-                countByType.footage++;
+    if (project) {
+        for (var i = 1; i <= Math.min(project.numItems, 100); i++) {
+            var item = project.item(i);
+            var itemType = "Unknown";
+            
+            if (isComp(item)) {
+                itemType = "Composition";
+                countByType.compositions++;
+            } else if (item instanceof FolderItem || (item && item.typeName === "Folder")) {
+                itemType = "Folder";
+                countByType.folders++;
+            } else if (item instanceof FootageItem || (item && item.typeName === "Footage")) {
+                if (item.mainSource && (item.mainSource instanceof SolidSource || (item.mainSource.typeName === "Solid"))) {
+                    itemType = "Solid";
+                    countByType.solids++;
+                } else {
+                    itemType = "Footage";
+                    countByType.footage++;
+                }
             }
+            
+            result.items.push({
+                id: item.id,
+                name: item.name,
+                type: itemType
+            });
         }
-        
-        result.items.push({
-            id: item.id,
-            name: item.name,
-            type: itemType
-        });
-    }
-    
-    result.itemCounts = countByType;
 
-    // Include active composition metadata if available
-    if (app.project.activeItem instanceof CompItem) {
-        var ac = app.project.activeItem;
-        result.activeComp = {
-            id: ac.id,
-            name: ac.name,
-            width: ac.width,
-            height: ac.height,
-            duration: ac.duration,
-            frameRate: ac.frameRate,
-            numLayers: ac.numLayers
-        };
+        result.itemCounts = countByType;
+
+        if (isComp(project.activeItem)) {
+            var ac = project.activeItem;
+            result.activeComp = {
+                id: ac.id,
+                name: ac.name,
+                width: ac.width,
+                height: ac.height,
+                duration: ac.duration,
+                frameRate: ac.frameRate,
+                numLayers: ac.numLayers
+            };
+        }
     }
 
     return JSON.stringify(result, null, 2);
@@ -1436,58 +1420,65 @@ function getProjectInfo() {
 function listCompositions() {
     var project = app.project;
     var result = {
-        compositions: []
+        projectName: (project && project.file) ? project.file.name : "Untitled Project",
+        compositions: [],
+        activeCompName: (project && isComp(project.activeItem)) ? project.activeItem.name : null
     };
-    
-    // Loop through items in the project
-    for (var i = 1; i <= project.numItems; i++) {
-        var item = project.item(i);
-        
-        // Check if the item is a composition
-        if (item instanceof CompItem) {
-            result.compositions.push({
-                id: item.id,
-                name: item.name,
-                duration: item.duration,
-                frameRate: item.frameRate,
-                width: item.width,
-                height: item.height,
-                numLayers: item.numLayers
-            });
+
+    if (project) {
+        for (var i = 1; i <= project.numItems; i++) {
+            var item = project.item(i);
+            if (isComp(item)) {
+                result.compositions.push({
+                    id: item.id,
+                    name: item.name,
+                    duration: item.duration,
+                    frameRate: item.frameRate,
+                    width: item.width,
+                    height: item.height,
+                    numLayers: item.numLayers
+                });
+            }
         }
     }
-    
+
     return JSON.stringify(result, null, 2);
 }
 
 function getLayerInfo() {
     var project = app.project;
     var result = {
+        composition: null,
         layers: []
     };
     
-    // Get the active composition
-    var activeComp = null;
-    if (app.project.activeItem instanceof CompItem) {
-        activeComp = app.project.activeItem;
-    } else {
+    var comp = null;
+    try {
+        comp = findComp();
+    } catch (e) {
         return JSON.stringify({ error: "No active composition" }, null, 2);
     }
     
-    // Loop through layers in the active composition
-    for (var i = 1; i <= activeComp.numLayers; i++) {
-        var layer = activeComp.layer(i);
+    result.composition = {
+        name: comp.name,
+        width: comp.width,
+        height: comp.height,
+        duration: comp.duration,
+        numLayers: comp.numLayers
+    };
+    
+    for (var j = 1; j <= comp.numLayers; j++) {
+        var layer = comp.layer(j);
         var layerInfo = {
             index: layer.index,
             name: layer.name,
             enabled: layer.enabled,
             locked: layer.locked,
             threeDLayer: layer.threeDLayer,
-            position: layer.property("Position").value,
+            position: layer.property("Position") ? layer.property("Position").value : null,
             inPoint: layer.inPoint,
             outPoint: layer.outPoint
         };
-        
         result.layers.push(layerInfo);
     }
     
@@ -1608,7 +1599,13 @@ function executeCommand(command, args) {
         try {
             var resultObj = JSON.parse(resultString);
             // Add a timestamp to help identify if we're getting fresh results
-            resultObj._responseTimestamp = new Date().toISOString();
+            var now = new Date();
+            resultObj._responseTimestamp = now.getFullYear() + "-" + 
+                ("0" + (now.getMonth() + 1)).slice(-2) + "-" + 
+                ("0" + now.getDate()).slice(-2) + "T" + 
+                ("0" + now.getHours()).slice(-2) + ":" + 
+                ("0" + now.getMinutes()).slice(-2) + ":" + 
+                ("0" + now.getSeconds()).slice(-2) + "Z";
             resultObj._commandExecuted = command;
             resultString = JSON.stringify(resultObj, null, 2);
             logToPanel("Added timestamp to result JSON for tracking freshness.");
@@ -1708,55 +1705,107 @@ function updateCommandStatus(status) {
 
 // Log message to panel
 function logToPanel(message) {
-    var timestamp = new Date().toLocaleTimeString();
-    logText.text = timestamp + ": " + message + "\n" + logText.text;
+    try {
+        var now = new Date();
+        var timeStr = ("0" + now.getHours()).slice(-2) + ":" + 
+                      ("0" + now.getMinutes()).slice(-2) + ":" + 
+                      ("0" + now.getSeconds()).slice(-2);
+        if (logText) {
+            logText.text = timeStr + ": " + message + "\n" + (logText.text || "").substring(0, 5000);
+        }
+    } catch (e) {}
 }
 
 // Check for new commands
-function checkForCommands() {
-    if (!autoRunCheckbox.value || isChecking) return;
-    
-    isChecking = true;
-    
-    try {
-        var commandFile = new File(getCommandFilePath());
-        if (commandFile.exists) {
-            commandFile.open("r");
-            var content = commandFile.read();
-            commandFile.close();
-            
-            if (content) {
-                var commandData = (typeof JSON !== "undefined" && JSON.parse)
-                    ? JSON.parse(content)
-                    : eval("(" + content + ")");
-                
-                // Only execute pending commands
-                if (commandData.status === "pending") {
-                    // Update status to running
-                    updateCommandStatus("running");
-                    
-                    // Execute the command
-                    executeCommand(commandData.command, commandData.args || {});
-                }
-            }
-        }
-    } catch (e) {
-        logToPanel("Error checking for commands: " + e.toString());
+function doCheckForCommands() {
+    if (autoRunCheckbox && !autoRunCheckbox.value) {
+        logToPanel("Auto-run is OFF");
+        return;
+    }
+    if (isChecking) {
+        logToPanel("Already checking, skipped");
+        return;
     }
     
-    isChecking = false;
+    isChecking = true;
+    try {
+        var filePath = getCommandFilePath();
+        var commandFile = new File(filePath);
+        if (!commandFile.exists) {
+            logToPanel("File does not exist: " + filePath);
+            return;
+        }
+        
+        commandFile.encoding = "UTF-8";
+        var opened = commandFile.open("r");
+        if (!opened) {
+            logToPanel("Could not open file: " + (commandFile.error || "unknown error"));
+            return;
+        }
+        
+        var content = commandFile.read();
+        commandFile.close();
+        
+        if (!content || content.length === 0) {
+            logToPanel("File content is empty");
+            return;
+        }
+        
+        var commandData = null;
+        try {
+            commandData = eval("(" + content + ")");
+        } catch (pe) {
+            logToPanel("Parse error: " + pe.toString());
+            return;
+        }
+        
+        if (!commandData) {
+            logToPanel("commandData is null");
+            return;
+        }
+        
+        logToPanel("Found: " + commandData.command + " (status: " + commandData.status + ")");
+        
+        if (commandData.status === "pending") {
+            updateCommandStatus("running");
+            executeCommand(commandData.command, commandData.args || {});
+        }
+    } catch (e) {
+        logToPanel("Error in check: " + e.toString() + (e.line ? " L" + e.line : ""));
+    } finally {
+        isChecking = false;
+    }
 }
 
-// Set up timer to check for commands
+// Global function for scheduleTask
+$.global.ae_mcp_tick = function() {
+    try {
+        doCheckForCommands();
+    } catch (err) {
+        logToPanel("Tick error: " + err.toString());
+    }
+};
+
 function startCommandChecker() {
-    app.scheduleTask("checkForCommands()", checkInterval, true);
+    try {
+        if ($.global.ae_mcp_taskId) {
+            app.cancelTask($.global.ae_mcp_taskId);
+            $.global.ae_mcp_taskId = null;
+        }
+    } catch (e) {}
+    try {
+        $.global.ae_mcp_taskId = app.scheduleTask("$.global.ae_mcp_tick()", checkInterval, true);
+    } catch (e) {
+        logToPanel("Error scheduling task: " + e.toString());
+    }
 }
 
 // Add manual check button
 var checkButton = panel.add("button", undefined, "Check for Commands Now");
 checkButton.onClick = function() {
     logToPanel("Manually checking for commands");
-    checkForCommands();
+    isChecking = false;
+    doCheckForCommands();
 };
 
 // Log startup
@@ -1767,7 +1816,13 @@ statusText.text = "Ready - Auto-run is " + (autoRunCheckbox.value ? "ON" : "OFF"
 // Start the command checker
 startCommandChecker();
 
-// Show the panel
-panel.center();
-panel.show();
+// Check immediately
+doCheckForCommands();
 
+// Show the panel
+if (panel instanceof Window) {
+    panel.center();
+    panel.show();
+} else {
+    panel.layout.layout(true);
+}

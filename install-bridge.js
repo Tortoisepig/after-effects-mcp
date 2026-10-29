@@ -91,11 +91,42 @@ try {
       execSync(`sudo cp "${sourceScript}" "${destinationScript}"`, { stdio: 'inherit' });
     }
   } else {
-    // Try to use PowerShell with elevated privileges on Windows
-    const command = `
-      Start-Process PowerShell -Verb RunAs -ArgumentList "-Command Copy-Item -Path '${sourceScript.replace(/\\/g, '\\\\')}' -Destination '${destinationScript.replace(/\\/g, '\\\\')}' -Force"
-    `;
-    execSync(`powershell -Command "${command}"`, { stdio: 'inherit' });
+    // Try direct copy first
+    let copied = false;
+    try {
+      fs.copyFileSync(sourceScript, destinationScript);
+      copied = true;
+    } catch {
+      // Direct copy failed due to permissions, invoke elevated cmd
+      const batPath = path.join(__dirname, 'copy_to_ae.bat');
+      if (fs.existsSync(batPath)) {
+        execSync(`powershell -Command "Start-Process cmd.exe -ArgumentList @('/c', 'call \\"${batPath}\\"') -Verb RunAs -Wait"`, { stdio: 'inherit' });
+      } else {
+        const escapedSource = sourceScript.replace(/'/g, "''");
+        const escapedDest = destinationScript.replace(/'/g, "''");
+        const psCommand = `Copy-Item -LiteralPath '${escapedSource}' -Destination '${escapedDest}' -Force`;
+        execSync(`powershell -Command "Start-Process powershell -Verb RunAs -Wait -ArgumentList @('-NoProfile', '-Command', '${psCommand}')"`, { stdio: 'inherit' });
+      }
+    }
+  }
+
+  // Also copy to AppData Roaming as backup for current user
+  if (isWindows) {
+    const appData = process.env.APPDATA;
+    if (appData) {
+      const versions = ['26.3', '26.0', '25.3', '25.0', '23.4'];
+      for (const v of versions) {
+        const userPanelDir = path.join(appData, 'Adobe', 'After Effects', v, 'Scripts', 'ScriptUI Panels');
+        try {
+          if (!fs.existsSync(userPanelDir)) {
+            fs.mkdirSync(userPanelDir, { recursive: true });
+          }
+          fs.copyFileSync(sourceScript, path.join(userPanelDir, 'mcp-bridge-auto.jsx'));
+        } catch {
+          // ignore
+        }
+      }
+    }
   }
 
   console.log('Bridge script installed successfully!');
@@ -107,7 +138,7 @@ try {
     console.log('2. Go to Edit > Preferences > Scripting & Expressions');
   }
   console.log('3. Enable "Allow Scripts to Write Files and Access Network"');
-  console.log('4. Restart After Effects');
+  console.log('4. Restart After Effects (if it is currently running, to reload panels)');
   console.log('5. Open the bridge panel: Window > mcp-bridge-auto.jsx');
 } catch (error) {
   console.error(`Error installing script: ${error.message}`);
@@ -120,4 +151,4 @@ try {
     console.error('3. You may need to run as administrator or use File Explorer with admin rights');
   }
   process.exit(1);
-} 
+}

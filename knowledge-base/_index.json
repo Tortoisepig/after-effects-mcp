@@ -1,0 +1,19 @@
+[
+  {
+    "category": "after-effects-automation",
+    "description": "After Effects ExtendScript 排版自動化、文字分行樣式控制與 IPC Bridge 溝通最佳實踐",
+    "keywords": [
+      "after-effects",
+      "extendscript",
+      "typography",
+      "text-document",
+      "character-range",
+      "font-size",
+      "scale",
+      "mcp-bridge",
+      "ipc",
+      "undo-group"
+    ]
+  }
+]
+
